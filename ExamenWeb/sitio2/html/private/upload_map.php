@@ -48,20 +48,39 @@ $success = "";
 
 // Handle file upload
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['map'])) {
-    $filename = $_FILES['map']['name'];
-    $tmp = $_FILES['map']['tmp_name'];
+    $tmp = $_FILES['map']['tmp_name'] ?? '';
     $upload_dir = __DIR__ . '/uploads/';
 
-    // VULNERABLE: Only checks the LAST extension
-    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-
-    if ($ext !== 'jpg' && $ext !== 'jpeg') {
-        $error = "¡Solo se permiten imágenes de mapas (.jpg)! ¡El Señor Oscuro lo exige!";
+    // CORRECCIÓN (CWE-434): validación real del fichero subido.
+    // Antes solo se miraba la última extensión y se conservaba el nombre del
+    // cliente (permitía dobles extensiones y sobreescritura de ficheros).
+    if (!is_uploaded_file($tmp) || ($_FILES['map']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        $error = "No se ha recibido ningún archivo válido.";
+    } elseif (($_FILES['map']['size'] ?? 0) > 2 * 1024 * 1024) {
+        $error = "El archivo supera el tamaño máximo permitido (2 MB).";
     } else {
-        if (move_uploaded_file($tmp, $upload_dir . $filename)) {
-            $success = "Mapa subido correctamente: <a href='uploads/$filename' style='color: var(--lotr-gold);'>Ver Mapa</a>";
+        $ext = strtolower(pathinfo($_FILES['map']['name'] ?? '', PATHINFO_EXTENSION));
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($tmp);
+        $allowed_ext  = ['jpg', 'jpeg'];
+        $allowed_mime = ['image/jpeg'];
+
+        if (!in_array($ext, $allowed_ext, true) || !in_array($mime, $allowed_mime, true)) {
+            $error = "¡Solo se permiten imágenes de mapas JPG reales (.jpg)! ¡El Señor Oscuro lo exige!";
         } else {
-            $error = "Error al subir. Los fuegos del Monte del Destino rechazan tu ofrenda.";
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0755, true);
+            }
+            // Nombre generado en el servidor: se descarta el nombre del cliente
+            $new_name = bin2hex(random_bytes(16)) . '.' . $ext;
+            $dest = $upload_dir . $new_name;
+
+            if (move_uploaded_file($tmp, $dest)) {
+                chmod($dest, 0644);
+                $safe_name = htmlspecialchars($new_name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $success = "Mapa subido correctamente: <a href='uploads/$safe_name' style='color: var(--lotr-gold);'>Ver Mapa</a>";
+            } else {
+                $error = "Error al subir. Los fuegos del Monte del Destino rechazan tu ofrenda.";
+            }
         }
     }
 }

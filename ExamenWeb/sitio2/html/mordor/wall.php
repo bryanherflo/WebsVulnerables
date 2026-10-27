@@ -8,19 +8,36 @@ require_once __DIR__ . '/../db.php';
 
 $is_admin = (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true && isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 
-// Admin Password Hash (SHA-256 of 'mmora')
-$admin_hash = 'b11a4369e06c7fdc024523773175727144e058428416ca327f27a6f296315264';
+// CORRECCIÓN (CWE-798 / CWE-916): la contraseña del profesor ya no está en el
+// código fuente. Se toma de variables de entorno y la cookie almacena un HMAC
+// derivado de un secreto de servidor (no el hash estático del secreto).
+// Si no hay configuración, la puerta queda cerrada (fail-closed).
+$gate_pass    = getenv('LOTR_ADMIN_PASS');
+$gate_secret  = getenv('LOTR_GATE_SECRET');
+$gate_enabled = ($gate_pass !== false && $gate_pass !== '' && $gate_secret !== false && $gate_secret !== '');
+
+$admin_hash = $gate_enabled ? hash_hmac('sha256', 'lotr-admin-gate', $gate_secret) : '';
 
 // Check strict admin auth via HttpOnly cookie (safe from XSS)
-$admin_auth = (isset($_COOKIE['admin_gate_pass']) && $_COOKIE['admin_gate_pass'] === $admin_hash);
+$admin_auth = ($gate_enabled
+    && isset($_COOKIE['admin_gate_pass'])
+    && hash_equals($admin_hash, (string) $_COOKIE['admin_gate_pass']));
 
-// Handle admin authentication (mmora)
+// Handle admin authentication
 $auth_error = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_admin'])) {
-    if ($_POST['unlock_pass'] === 'mmora') {
+    if (!$gate_enabled) {
+        $auth_error = "La puerta de administración no está configurada en el servidor.";
+    } elseif (hash_equals($gate_pass, (string) ($_POST['unlock_pass'] ?? ''))) {
         $admin_auth = true;
-        // Set HttpOnly cookie with HASH for 30 days
-        setcookie('admin_gate_pass', $admin_hash, time() + (86400 * 30), "/", "", false, true);
+        // Cookie HttpOnly + SameSite con el HMAC del secreto de servidor
+        setcookie('admin_gate_pass', $admin_hash, [
+            'expires'  => time() + (86400 * 30),
+            'path'     => '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+            'secure'   => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+        ]);
         // Reload to apply
         header("Location: wall.php");
         exit();
@@ -46,16 +63,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $is_admin && $admin_auth) {
 }
 
 // Handle normal message submission (available to everyone)
-// BUT malicious students can try to post XSS
+// CORRECCIÓN (CWE-79): se elimina el filtro por lista negra (solo bloqueaba
+// "<script" y se evadía con <img onerror>, <svg onload>, etc.). El contenido
+// se guarda tal cual y se escapa SIEMPRE al renderizarlo (htmlspecialchars).
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message']) && !isset($_POST['unlock_admin'])) {
-    $author = $_POST['author'] ?? 'Orco Anónimo';
+    $author = trim($_POST['author'] ?? '') !== '' ? trim($_POST['author']) : 'Orco Anónimo';
     $message = $_POST['message'] ?? '';
 
-    // VULNERABLE: Weak filter - only blocks <script> tag
-    if (preg_match("/<script/i", $message)) {
-        $error = "¡El Ojo de Sauron bloquea tu magia oscura! ¡No se permiten scripts!";
+    if ($message === '' || mb_strlen($message) > 2000) {
+        $error = "Mensaje vacío o demasiado largo.";
     } else {
-        // Store without sanitization
+        // Store without HTML sanitization: la mitigación está en la salida
         $stmt = $conn->prepare("INSERT INTO orc_messages (author, message) VALUES (?, ?)");
         $stmt->bind_param("ss", $author, $message);
         $stmt->execute();
@@ -258,12 +276,12 @@ $messages = $conn->query("SELECT * FROM orc_messages ORDER BY created_at DESC");
                                 </form>
                             <?php endif; ?>
 
-                            <div class="author"><?php echo $msg['author']; ?></div>
+                            <div class="author"><?php echo htmlspecialchars($msg['author'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></div>
 
-                            <!-- XSS VULNERABILITY HERE: Message is printed without htmlspecialchars() -->
-                            <div class="text"><?php echo $msg['message']; ?></div>
+                            <!-- CORRECCIÓN (CWE-79): escapado de salida antes de imprimir -->
+                            <div class="text"><?php echo nl2br(htmlspecialchars($msg['message'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
 
-                            <div class="time"><?php echo $msg['created_at']; ?></div>
+                            <div class="time"><?php echo htmlspecialchars($msg['created_at'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></div>
                         </div>
                     <?php endwhile; ?>
                 </div>

@@ -1,8 +1,9 @@
 <?php
 // Login de Mordor - Portal de Sauron
-// Sesiones PHP reales (sin httpOnly para permitir robo de cookie vía XSS)
+// CORRECCIÓN (CWE-1004): la cookie de sesión se emite con HttpOnly.
+// El endurecimiento se define en apache-security.conf; se elimina el
+// ini_set() que desactivaba deliberadamente HttpOnly.
 
-ini_set('session.cookie_httponly', 0);
 session_name("lotrCookie");
 session_start();
 
