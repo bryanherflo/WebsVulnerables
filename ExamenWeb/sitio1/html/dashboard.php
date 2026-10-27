@@ -30,9 +30,6 @@ $username = $_SESSION['username'] ?? 'Oficial';
             <h2>> Bienvenido, Comandante <?php echo htmlspecialchars($username); ?></h2>
             <p>Te has autenticado correctamente en el sistema de mando central de la Estrella de la Muerte.</p>
             <p>Todos los sistemas operativos. Superlaser cargado al 100%.</p>
-            <?php if ($username === 'admin'): ?>
-                <!-- FLAG{1MP3R14L_4CC3SS_GR4NT3D_x8k2m7} -->
-            <?php endif; ?>
 
             <div class="status-grid">
                 <div class="status-card">

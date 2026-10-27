@@ -129,7 +129,6 @@
                 en el conducto R-421. El Alto Mando ha descartado esta información como irrelevante.
                 Archivo cerrado por orden del Director Krennic.
             </p>
-            <!-- config_backup: reactor_core_access=kyber_crystal_2187 | root_maintenance_panel=/reactor/maintenance.php -->
         </div>
 
         <div class="footer">

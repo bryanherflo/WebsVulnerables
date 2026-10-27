@@ -18,17 +18,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $user = $_POST['user'] ?? '';
     $pass = $_POST['pass'] ?? '';
 
-    // VULNERABLE: SQL Injection - No prepared statements, no sanitization
-    $query = "SELECT * FROM users WHERE user='$user' AND pass='$pass'";
-    $result = $conn->query($query);
+    // CORRECCIÓN (CWE-89): consulta parametrizada. La entrada del usuario nunca
+    // se concatena en el SQL, por lo que una comilla simple ya no altera la query.
+    $stmt = $conn->prepare("SELECT id, user, pass FROM users WHERE user = ? AND pass = ?");
+    $stmt->bind_param("ss", $user, $pass);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
     if ($result && $result->num_rows > 0) {
         $row = $result->fetch_assoc();
+        // CORRECCIÓN (CWE-384): nuevo identificador de sesión tras autenticar.
+        session_regenerate_id(true);
         $_SESSION['logged_in'] = true;
         $_SESSION['username'] = $row['user'];
+        $stmt->close();
         header("Location: dashboard.php");
         exit();
     } else {
+        $stmt->close();
         $error = "ACCESO DENEGADO - Credenciales Imperiales no válidas";
     }
 }
