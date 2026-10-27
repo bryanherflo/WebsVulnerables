@@ -1,16 +1,31 @@
 <?php
 // Visor de Mensajes de Tripulación
-// VULNERABLE: Muestra los mensajes sin sanitizar - XSS Stored
 require_once __DIR__ . '/../db.php';
 
-// HARDENING: Protección con contraseña
-$auth_cookie = 'st_logs_auth';
-$auth_pass = 'mmora';
-$auth_hash = hash('sha256', $auth_pass . 'salt_starfleet');
+// CORRECCIÓN (CWE-798 / CWE-916): la contraseña deja de estar en el código.
+// Se toma de variables de entorno y la cookie guarda un HMAC del secreto de
+// servidor. Si no hay configuración, el panel queda cerrado (fail-closed).
+session_start();
+if (empty($_SESSION['logs_csrf'])) {
+    $_SESSION['logs_csrf'] = bin2hex(random_bytes(32));
+}
+$csrf = $_SESSION['logs_csrf'];
+
+$auth_cookie  = 'st_logs_auth';
+$auth_pass    = getenv('ST_LOGS_PASS');
+$auth_secret  = getenv('ST_LOGS_SECRET');
+$logs_enabled = ($auth_pass !== false && $auth_pass !== '' && $auth_secret !== false && $auth_secret !== '');
+$auth_hash    = $logs_enabled ? hash_hmac('sha256', 'starfleet-logs', $auth_secret) : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_pass'])) {
-    if ($_POST['unlock_pass'] === $auth_pass) {
-        setcookie($auth_cookie, $auth_hash, time() + 3600, '/', '', false, true);
+    if ($logs_enabled && hash_equals($auth_pass, (string) $_POST['unlock_pass'])) {
+        setcookie($auth_cookie, $auth_hash, [
+            'expires'  => time() + 3600,
+            'path'     => '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+            'secure'   => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+        ]);
         header("Location: index.php");
         exit();
     } else {
@@ -18,7 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_pass'])) {
     }
 }
 
-if (!isset($_COOKIE[$auth_cookie]) || $_COOKIE[$auth_cookie] !== $auth_hash) {
+$authed = ($logs_enabled
+    && isset($_COOKIE[$auth_cookie])
+    && hash_equals($auth_hash, (string) $_COOKIE[$auth_cookie]));
+
+if (!$authed) {
     ?>
     <!DOCTYPE html>
     <html lang="es">
@@ -101,6 +120,7 @@ if (!isset($_COOKIE[$auth_cookie]) || $_COOKIE[$auth_cookie] !== $auth_hash) {
                 <form method="POST"
                     onsubmit="return confirm('⚠ ALERTA: ¿Está seguro de que desea purgar todo el registro de comunicaciones? esta acción es irreversible.');"
                     style="display:inline;">
+                    <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8'); ?>">
                     <input type="hidden" name="clear_logs" value="1">
                     <button type="submit" class="nav-link"
                         style="border-color:var(--lcars-red); color:var(--lcars-red); cursor:pointer; background:transparent; font-family:inherit; font-size:0.9rem;">🗑
@@ -109,10 +129,14 @@ if (!isset($_COOKIE[$auth_cookie]) || $_COOKIE[$auth_cookie] !== $auth_hash) {
             </div>
 
             <?php
-            // Lógica de borrado
+            // Lógica de borrado — CORRECCIÓN (CWE-352): se exige token CSRF.
             if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clear_logs'])) {
-                $conn->query("TRUNCATE TABLE crew_messages"); // Borrar todo
-                echo '<div class="alert-box info">✓ Registro de comunicaciones purgado correctamente.</div>';
+                if (!isset($_POST['csrf']) || !hash_equals($csrf, (string) $_POST['csrf'])) {
+                    echo '<div class="alert-box danger">⚠ Token de seguridad inválido. Operación cancelada.</div>';
+                } else {
+                    $conn->query("TRUNCATE TABLE crew_messages"); // Borrar todo
+                    echo '<div class="alert-box info">✓ Registro de comunicaciones purgado correctamente.</div>';
+                }
             }
             ?>
 
@@ -134,12 +158,11 @@ if (!isset($_COOKIE[$auth_cookie]) || $_COOKIE[$auth_cookie] !== $auth_hash) {
                     $result = $conn->query("SELECT * FROM crew_messages ORDER BY id DESC");
                     if ($result && $result->num_rows > 0) {
                         while ($row = $result->fetch_assoc()) {
-                            // VULNERABLE: Sin sanitización - XSS Stored
-                            // El autor y el mensaje se muestran directamente sin htmlspecialchars
+                            // CORRECCIÓN (CWE-79): escapado de salida de todos los campos
                             echo "<div class='log-line'>";
-                            echo "<span style='color: var(--lcars-orange);'>[Stardate " . $row['stardate'] . "]</span> ";
-                            echo "<strong>" . $row['author'] . ":</strong> ";
-                            echo $row['message'];
+                            echo "<span style='color: var(--lcars-orange);'>[Stardate " . htmlspecialchars($row['stardate'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "]</span> ";
+                            echo "<strong>" . htmlspecialchars($row['author'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ":</strong> ";
+                            echo nl2br(htmlspecialchars($row['message'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
                             echo "</div>";
                         }
                     } else {

@@ -1,18 +1,26 @@
 <?php
-// VULNERABLE: Path Traversal via lang parameter
-$lang = $_GET['lang'] ?? 'es.php';
+// CORRECCIÓN (CWE-22 / CWE-98): lista blanca de ficheros de idioma.
+// Antes se hacía include("lang/" . $lang) con la entrada del usuario, lo que
+// permitía leer cualquier fichero del servidor con ?lang=../../../../etc/passwd.
+$lang = basename($_GET['lang'] ?? 'es.php');
+$allowed_langs = ['es.php', 'en.php'];
+if (!in_array($lang, $allowed_langs, true)) {
+    $lang = 'es.php';
+}
 
 require_once __DIR__ . '/db.php';
 
-// Guardar mensaje de tripulación (VULNERABLE: sin sanitización - XSS stored)
+// Guardar mensaje de tripulación
+// CORRECCIÓN (CWE-79): se elimina el filtro por palabras ("alert"/"location"),
+// que era trivialmente evadible. El mensaje se guarda tal cual y se escapa
+// siempre al mostrarlo (ver logs/index.php).
 $msg_success = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['author'], $_POST['message'])) {
-    $author = $_POST['author'];   // SIN sanitizar - vulnerable a XSS stored
-    $message = $_POST['message']; // SIN sanitizar - vulnerable a XSS stored
+    $author = trim($_POST['author']);
+    $message = $_POST['message'];
 
-    // HARDENING: Bloquear 'alert' para forzar ataques más complejos
-    if (stripos($message, 'alert') !== false || stripos($message, 'location') !== false) {
-        $msg_success = "<span style='color: var(--lcars-red);'>⚠ ERROR DE PROTOCOLO: El uso de 'alert' o redirecciones está prohibido por Starfleet.</span>";
+    if ($author === '' || $message === '' || mb_strlen($message) > 2000) {
+        $msg_success = "<span style='color: var(--lcars-red);'>⚠ ERROR DE PROTOCOLO: mensaje no válido.</span>";
     } else {
         $stardate = '2266.' . rand(10, 99);
         $stmt = $conn->prepare("INSERT INTO crew_messages (author, message, stardate) VALUES (?, ?, ?)");
@@ -85,9 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['author'], $_POST['mes
             <div class="content-box">
                 <h2>Información de la Nave</h2>
                 <?php
-                // VULNERABLE: Direct file inclusion - no path sanitization
-                // Student can use: ?lang=../../../../flag.txt
-                include("lang/" . $lang);
+                // CORRECCIÓN (CWE-98): $lang ya está validado contra una lista blanca
+                include __DIR__ . '/lang/' . $lang;
                 ?>
             </div>
 

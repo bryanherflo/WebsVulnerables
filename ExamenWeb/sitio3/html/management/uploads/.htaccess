@@ -1,0 +1,19 @@
+# CORRECCIÓN (CWE-434): el directorio de subidas no debe ejecutar código.
+<IfModule mod_authz_core.c>
+    <FilesMatch "\.(php|phtml|phar|php[0-9])$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <FilesMatch "\.(php|phtml|phar|php[0-9])$">
+        Deny from all
+    </FilesMatch>
+</IfModule>
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+RemoveHandler .php .phtml .phar
+RemoveType .php .phtml .phar
+Options -ExecCGI -Indexes

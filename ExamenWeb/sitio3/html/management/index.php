@@ -16,24 +16,39 @@ $error = "";
 // Directorio de subida
 $upload_dir = __DIR__ . '/uploads/';
 if (!file_exists($upload_dir)) {
-    mkdir($upload_dir, 0777, true);
+    mkdir($upload_dir, 0755, true);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['sys_file'])) {
     $file = $_FILES['sys_file'];
-    $filename = $file['name'];
-    $tmp_name = $file['tmp_name'];
+    $tmp_name = $file['tmp_name'] ?? '';
 
-    // VULNERABILIDAD: Validación débil de extensión
-    // Solo comprueba si contiene ".jpg", permitiendo "shell.php.jpg" o similar.
-    if (strpos($filename, '.jpg') !== false) {
-        if (move_uploaded_file($tmp_name, $upload_dir . $filename)) {
-            $msg = "Archivo de sistema subido correctamente: " . htmlspecialchars($filename);
-        } else {
-            $error = "Error al mover el archivo al repositorio de sistemas.";
-        }
+    // CORRECCIÓN (CWE-434): validación estricta del fichero subido.
+    // Antes bastaba con que el nombre CONTUVIERA ".jpg" (strpos), así que
+    // "shell.jpg.php" pasaba el filtro. Ahora se exige extensión exacta,
+    // MIME real de imagen JPEG y se genera un nombre aleatorio en servidor.
+    if (!is_uploaded_file($tmp_name) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        $error = "No se ha recibido ningún archivo válido.";
+    } elseif (($file['size'] ?? 0) > 2 * 1024 * 1024) {
+        $error = "El archivo supera el tamaño máximo permitido (2 MB).";
     } else {
-        $error = "Formato no válido. El sistema solo acepta esquemas visuales (.jpg).";
+        $ext  = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($tmp_name);
+        $allowed_ext  = ['jpg', 'jpeg'];
+        $allowed_mime = ['image/jpeg'];
+
+        if (!in_array($ext, $allowed_ext, true) || !in_array($mime, $allowed_mime, true)) {
+            $error = "Formato no válido. El sistema solo acepta imágenes JPG reales.";
+        } else {
+            $filename = bin2hex(random_bytes(16)) . '.' . $ext;
+            $dest = $upload_dir . $filename;
+            if (move_uploaded_file($tmp_name, $dest)) {
+                chmod($dest, 0644);
+                $msg = "Archivo de sistema subido correctamente: " . htmlspecialchars($filename);
+            } else {
+                $error = "Error al mover el archivo al repositorio de sistemas.";
+            }
+        }
     }
 }
 ?>
